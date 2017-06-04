@@ -6,26 +6,27 @@
  * Copyright 2014-2015, Adrian Soluch - http://soluch.us/
  * Released under the MIT License
  * ============================================================ */
-var NodeBittrexApi = function() {
+const NodeBittrexApi = () =>
+{    
+    const crypto = require('crypto');
+    const request = require('request');
+    const JSONStream = require('JSONStream');
+    const es = require('event-stream');
+    const nonce = require('nonce')();
 
-    'use strict';
+    const request_options =
+    {
+        method: 'GET',
+        agent: false,
+        headers:
+        {
+            "User-Agent": 'Mozilla/4.0 (compatible; Node Bittrex API)',
+            "Content-type": 'application/x-www-form-urlencode'
+        }
+    };
 
-    var request = require('request'),
-        hmac_sha512 = require('./hmac-sha512.js'),
-        JSONStream = require('JSONStream'),
-        es = require('event-stream');
-
-    var start,
-        request_options = {
-            method: 'GET',
-            agent: false,
-            headers: {
-                "User-Agent": "Mozilla/4.0 (compatible; Node Bittrex API)",
-                "Content-type": "application/x-www-form-urlencoded"
-            }
-        };
-
-    var opts = {
+    const opts =
+    {
         baseUrl: 'https://bittrex.com/api/v1.1',
         apikey: 'APIKEY',
         apisecret: 'APISECRET',
@@ -34,198 +35,258 @@ var NodeBittrexApi = function() {
         stream: false
     };
 
-    var getNonce = function() {
-        return Math.floor(new Date().getTime() / 1000);
-    };
+    const extractOptions = (options) =>
+    {
+        const o = Object.keys(options);
 
-    var extractOptions = function(options) {
-
-        var o = Object.keys(options),
-            i;
-        for (i = 0; i < o.length; i++) {
+        for(let i = 0; i < o.length; i++)
+        {
             opts[o[i]] = options[o[i]];
         }
     };
 
-    var apiCredentials = function(uri) {
-
-        var options = {
+    const apiCredentials = (uri) =>
+    {
+        const options =
+        {
             apikey: opts.apikey,
-            nonce: getNonce()
+            nonce: nonce()
         };
 
         return setRequestUriGetParams(uri, options);
     };
 
-    var setRequestUriGetParams = function(uri, options) {
-        var op;
-        if (typeof(uri) === 'object') {
+    const setRequestUriGetParams = (uri, options) =>
+    {
+        let op;
+
+        if(typeof(uri) === 'object')
+        {
             op = uri;
             uri = op.uri;
-        } else {
+        }
+        
+        else
+        {
             op = request_options;
         }
 
+        const o = Object.keys(options);
 
-        var o = Object.keys(options),
-            i;
-        for (i = 0; i < o.length; i++) {
+        for(let i = 0; i < o.length; i++)
+        {
             uri = updateQueryStringParameter(uri, o[i], options[o[i]]);
         }
 
-        op.headers.apisign = hmac_sha512.HmacSHA512(uri, opts.apisecret); // setting the HMAC hash `apisign` http header
+        op.headers.apisign = crypto.createHmac('sha512', opts.apisecret).update(uri).digest('hex'); // setting the HMAC hash `apisign` http header
         op.uri = uri;
 
         return op;
     };
 
-    var updateQueryStringParameter = function(uri, key, value) {
+    const updateQueryStringParameter = (uri, key, value) =>
+    {
+        const re = new RegExp("([?&])" + key + "=.*?(&|$)", "i");
+        const separator = uri.indexOf('?') !== -1 ? "&" : "?";
 
-        var re = new RegExp("([?&])" + key + "=.*?(&|$)", "i");
-        var separator = uri.indexOf('?') !== -1 ? "&" : "?";
-
-        if (uri.match(re)) {
+        if(uri.match(re))
+        {
             uri = uri.replace(re, '$1' + key + "=" + value + '$2');
-        } else {
+        }
+        
+        else
+        {
             uri = uri + separator + key + "=" + value;
         }
 
         return uri;
     };
 
-    var sendRequestCallback = function(callback, op) {
-        start = Date.now();
+    const sendRequestCallback = (callback, op) =>
+    {
+        return new Promise((resolve, reject) =>
+        {
+            if(typeof callback != 'function')
+            {
+                callback = () => {};
+                opts.stream = false;
+            }
 
-        switch (opts.stream) {
+            let start = Date.now();
 
-            case true:
-                request(op)
+            switch(opts.stream)
+            {
+                case true:
+                    request(op)
                     .pipe(JSONStream.parse('*'))
-                    .pipe(es.mapSync(function(data) {
-                        callback(data);
-                        ((opts.verbose) ? console.log("streamed from " + op.uri + " in: %ds", (Date.now() - start) / 1000) : '');
-                    }));
-                break;
-            case false:
-                request(op, function(error, result, body) {
-                    if (!body || !result || result.statusCode != 200) {
-                        callback({error : error, result : result});
-                    } else {
-                        callback(((opts.cleartext) ? body : JSON.parse(body)));
-                        ((opts.verbose) ? console.log("requested from " + result.request.href + " in: %ds", (Date.now() - start) / 1000) : '');
+                    .pipe(es.mapSync((data) =>
+                    {
+                        if(opts.verbose)
+                        {
+                            console.log(`streamed from ${op.uri} in: ${(Date.now() - start) / 1000}s`);
+                        }
 
-                    }
-                });
-                break;
-        }
+                        callback(data);
+                    })) ;
+                    break;
+
+                    case false:
+                        request(op, (error, result, body) =>
+                        {
+                            if(!body || !result || result.statusCode != 200)
+                            {
+                                callback({error : error, result : result});
+                                return reject(error);
+                            }
+                            
+                            else
+                            {
+                                if(opts.verbose)
+                                {
+                                    console.log(`requested from ${result.request.href} in: ${(Date.now() - start) / 1000}s`);
+                                }
+                                
+                                callback(opts.cleartext ? body : JSON.parse(body));
+                                return resolve(opts.cleartext ? body : JSON.parse(body));
+                            }
+                        });
+                    break;
+            }
+        });
     };
 
     return {
-        options: function(options) {
+        options: (options) =>
+        {
             extractOptions(options);
         },
-        sendCustomRequest: function(request_string, callback, credentials) {
-            var op;
+        sendCustomRequest: (request_string, callback, credentials) =>
+        {
+            let op;
 
-            if (credentials === true) {
+            if(credentials === true)
+            {
                 op = apiCredentials(request_string);
-            } else {
+            }
+            
+            else
+            {
                 op = request_options;
                 op.uri = request_string;
             }
-            sendRequestCallback(callback, op);
+
+            return sendRequestCallback(callback, op);
         },
-        getmarkets: function(callback) {
-            var op = request_options;
+        getmarkets: (callback) =>
+        {
+            const op = request_options;
             op.uri = opts.baseUrl + '/public/getmarkets';
-            sendRequestCallback(callback, op);
+            return sendRequestCallback(callback, op);
         },
-        getcurrencies: function(callback) {
-            var op = request_options;
+        getcurrencies: (callback) =>
+        {
+            const op = request_options;
             op.uri = opts.baseUrl + '/public/getcurrencies';
-            sendRequestCallback(callback, op);
+            return sendRequestCallback(callback, op);
         },
-        getticker: function(options, callback) {
-            var op = setRequestUriGetParams(opts.baseUrl + '/public/getticker', options);
-            sendRequestCallback(callback, op);
+        getticker: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(opts.baseUrl + '/public/getticker', options);
+            return sendRequestCallback(callback, op);
         },
-        getmarketsummaries: function(callback) {
-            var op = request_options;
+        getmarketsummaries: (callback) =>
+        {
+            const op = request_options;
             op.uri = opts.baseUrl + '/public/getmarketsummaries';
-            sendRequestCallback(callback, op);
+            return sendRequestCallback(callback, op);
         },
-        getmarketsummary: function(options, callback) {
-            var op = setRequestUriGetParams(opts.baseUrl + '/public/getmarketsummary', options);
-            sendRequestCallback(callback, op);
+        getmarketsummary: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(opts.baseUrl + '/public/getmarketsummary', options);
+            return sendRequestCallback(callback, op);
         },
-        getorderbook: function(options, callback) {
-            var op = setRequestUriGetParams(opts.baseUrl + '/public/getorderbook', options);
-            sendRequestCallback(callback, op);
+        getorderbook: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(opts.baseUrl + '/public/getorderbook', options);
+            return sendRequestCallback(callback, op);
         },
-        getmarkethistory: function(options, callback) {
-            var op = setRequestUriGetParams(opts.baseUrl + '/public/getmarkethistory', options);
-            sendRequestCallback(callback, op);
+        getmarkethistory: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(opts.baseUrl + '/public/getmarkethistory', options);
+            return sendRequestCallback(callback, op);
         },
-        buylimit: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/market/buylimit'), options);
-            sendRequestCallback(callback, op);
+        buylimit: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/market/buylimit'), options);
+            return sendRequestCallback(callback, op);
         },
 
-        buymarket: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/market/buymarket'), options);
-            sendRequestCallback(callback, op);
+        buymarket: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/market/buymarket'), options);
+            return sendRequestCallback(callback, op);
         },
-        selllimit: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/market/selllimit'), options);
-            sendRequestCallback(callback, op);
+        selllimit: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/market/selllimit'), options);
+            return sendRequestCallback(callback, op);
         },
-        sellmarket: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/market/sellmarket'), options);
-            sendRequestCallback(callback, op);
+        sellmarket: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/market/sellmarket'), options);
+            return sendRequestCallback(callback, op);
         },
-        cancel: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/market/cancel'), options);
-            sendRequestCallback(callback, op);
+        cancel: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/market/cancel'), options);
+            return sendRequestCallback(callback, op);
         },
-        getopenorders: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/market/getopenorders'), options);
-            sendRequestCallback(callback, op);
+        getopenorders: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/market/getopenorders'), options);
+            return sendRequestCallback(callback, op);
         },
-        getbalances: function(callback) {
-            var op = apiCredentials(opts.baseUrl + '/account/getbalances');
-            sendRequestCallback(callback, op);
+        getbalances: (callback) =>
+        {
+            const op = apiCredentials(opts.baseUrl + '/account/getbalances');
+            return sendRequestCallback(callback, op);
         },
-        getbalance: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/getbalance'), options);
-            sendRequestCallback(callback, op);
+        getbalance: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/getbalance'), options);
+            return sendRequestCallback(callback, op);
         },
-        getwithdrawalhistory: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/getwithdrawalhistory'), options);
-            sendRequestCallback(callback, op);
+        getwithdrawalhistory: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/getwithdrawalhistory'), options);
+            return sendRequestCallback(callback, op);
         },
-        getdepositaddress: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/getdepositaddress'), options);
-            sendRequestCallback(callback, op);
+        getdepositaddress: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/getdepositaddress'), options);
+            return sendRequestCallback(callback, op);
         },
-        getdeposithistory: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/getdeposithistory'), options);
-            sendRequestCallback(callback, op);
+        getdeposithistory: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/getdeposithistory'), options);
+            return sendRequestCallback(callback, op);
         },
-        getorderhistory: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/getorderhistory'), options);
-            sendRequestCallback(callback, op);
+        getorderhistory: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/getorderhistory'), options);
+            return sendRequestCallback(callback, op);
         },
-        getorder: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/getorder'), options);
-            sendRequestCallback(callback, op);
+        getorder: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/getorder'), options);
+            return sendRequestCallback(callback, op);
         },
-        withdraw: function(options, callback) {
-            var op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/withdraw'), options);
-            sendRequestCallback(callback, op);
+        withdraw: (options, callback) =>
+        {
+            const op = setRequestUriGetParams(apiCredentials(opts.baseUrl + '/account/withdraw'), options);
+            return sendRequestCallback(callback, op);
         }
-
     };
+};
 
-}();
-
-module.exports = NodeBittrexApi;
+module.exports = NodeBittrexApi();
